@@ -12,8 +12,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,12 +35,15 @@ fun HomeScreen(
     courses: List<Course>,
     instances: List<com.example.schedule.data.model.ClassInstance>,
     holidayMap: Map<String, Boolean>,
+    themeKey: String,
+    onThemeChange: (String) -> Unit,
     onAddClick: () -> Unit,
     onEditClick: (Course) -> Unit,
     onDeleteClick: (Course) -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("本周课程", "日历视图", "课程列表")
+    var showThemeMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -46,6 +51,41 @@ fun HomeScreen(
             Column {
                 TopAppBar(
                     title = { Text("课程表", fontWeight = FontWeight.SemiBold) },
+                    actions = {
+                        Box {
+                            IconButton(onClick = { showThemeMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Palette,
+                                    contentDescription = "切换主题",
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showThemeMenu,
+                                onDismissRequest = { showThemeMenu = false }
+                            ) {
+                                com.example.schedule.ui.theme.AllThemePresets.forEach { preset ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                if (preset.key == themeKey) {
+                                                    Icon(Icons.Default.Check, null,
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = MaterialTheme.colorScheme.primary)
+                                                    Spacer(Modifier.width(8.dp))
+                                                }
+                                                Text(preset.label)
+                                            }
+                                        },
+                                        onClick = {
+                                            onThemeChange(preset.key)
+                                            showThemeMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.background,
                         titleContentColor = MaterialTheme.colorScheme.onSurface

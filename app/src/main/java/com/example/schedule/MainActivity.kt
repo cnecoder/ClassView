@@ -14,11 +14,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.example.schedule.ui.course.CourseEditScreen
 import com.example.schedule.ui.course.HomeScreen
 import com.example.schedule.ui.course.CourseViewModel
 import com.example.schedule.ui.theme.ScheduleTheme
+import com.example.schedule.ui.theme.ThemeManager
 import com.example.schedule.util.DateUtils
 
 class MainActivity : ComponentActivity() {
@@ -41,7 +45,8 @@ class MainActivity : ComponentActivity() {
         requestPermissions()
 
         setContent {
-            ScheduleTheme {
+            var themeKey by remember { mutableStateOf(ThemeManager.getCurrentTheme(this)) }
+            ScheduleTheme(themeKey = themeKey) {
                 val courses by viewModel.courses.collectAsState()
                 val instances by viewModel.instances.collectAsState()
                 val holidayMap by viewModel.holidayMap.collectAsState()
@@ -66,6 +71,11 @@ class MainActivity : ComponentActivity() {
                         courses = courses,
                         instances = instances,
                         holidayMap = holidayMap,
+                        themeKey = themeKey,
+                        onThemeChange = { key ->
+                            ThemeManager.setCurrentTheme(this@MainActivity, key)
+                            themeKey = key
+                        },
                         onAddClick = { viewModel.startNewCourse() },
                         onEditClick = { viewModel.startEditCourse(it) },
                         onDeleteClick = { viewModel.deleteCourse(it) }
