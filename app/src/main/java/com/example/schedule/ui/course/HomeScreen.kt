@@ -44,6 +44,13 @@ fun HomeScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("本周课程", "日历视图", "课程列表")
     var showThemeMenu by remember { mutableStateOf(false) }
+    var showThemeEditor by remember { mutableStateOf(false) }
+    var editingCustomKey by remember { mutableStateOf<String?>(null) }
+    var editingCustomName by remember { mutableStateOf<String?>(null) }
+    var editingCustomColors by remember { mutableStateOf<Map<String, Color>?>(null) }
+    // 触发清空编辑器状态 (Compose 需用 key 强制重建)
+    var editorKey by remember { mutableIntStateOf(0) }
+    val customThemes = remember { mutableStateListOf<com.example.schedule.ui.theme.ThemeManager.SavedTheme>() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -64,13 +71,13 @@ fun HomeScreen(
                                 expanded = showThemeMenu,
                                 onDismissRequest = { showThemeMenu = false }
                             ) {
+                                // 默认预设
                                 com.example.schedule.ui.theme.AllThemePresets.forEach { preset ->
                                     DropdownMenuItem(
                                         text = {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 if (preset.key == themeKey) {
-                                                    Icon(Icons.Default.Check, null,
-                                                        modifier = Modifier.size(16.dp),
+                                                    Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp),
                                                         tint = MaterialTheme.colorScheme.primary)
                                                     Spacer(Modifier.width(8.dp))
                                                 }
@@ -83,6 +90,53 @@ fun HomeScreen(
                                         }
                                     )
                                 }
+                                // 自定义主题
+                                if (customThemes.isNotEmpty()) {
+                                    HorizontalDivider()
+                                    customThemes.forEach { t ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    if (t.key == themeKey) {
+                                                        Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp),
+                                                            tint = MaterialTheme.colorScheme.primary)
+                                                        Spacer(Modifier.width(8.dp))
+                                                    }
+                                                    Text(t.name, Modifier.weight(1f))
+                                                    IconButton(modifier = Modifier.size(24.dp),
+                                                        onClick = {
+                                                            val map = com.example.schedule.ui.theme.ThemeManager.savedThemeToColors(t)
+                                                            editingCustomKey = t.key
+                                                            editingCustomName = t.name
+                                                            editingCustomColors = map
+                                                            editorKey++
+                                                            showThemeMenu = false
+                                                            showThemeEditor = true
+                                                        }) {
+                                                        Icon(Icons.Default.Palette, "编辑", modifier = Modifier.size(14.dp),
+                                                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                }
+                                            },
+                                            onClick = {
+                                                onThemeChange(t.key)
+                                                showThemeMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("+ 新建主题", color = MaterialTheme.colorScheme.primary) },
+                                    onClick = {
+                                        editingCustomKey = null
+                                        editingCustomName = null
+                                        editingCustomColors = null
+                                        editorKey++
+                                        showThemeMenu = false
+                                        showThemeEditor = true
+                                    }
+                                )
                             }
                         }
                     },
@@ -116,6 +170,32 @@ fun HomeScreen(
             0 -> WeekView(courses, instances, holidayMap, padding, onEditClick, onDeleteClick)
             1 -> CalendarView(courses, instances, holidayMap, padding, onEditClick)
             2 -> CourseListView(courses, instances, padding, onEditClick)
+        }
+    }
+
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // 每次打开编辑器前刷新自定义主题列表
+    LaunchedEffect(showThemeMenu) {
+        if (showThemeMenu) {
+            customThemes.clear()
+            customThemes.addAll(com.example.schedule.ui.theme.ThemeManager.loadAllCustomThemes(ctx))
+        }
+    }
+
+    if (showThemeEditor) {
+        key(editorKey) {
+            com.example.schedule.ui.theme.ThemeEditorDialog(
+                editKey = editingCustomKey,
+            editName = editingCustomName,
+            editColors = editingCustomColors,
+            onDismiss = {
+                showThemeEditor = false
+                editingCustomKey = null; editingCustomName = null; editingCustomColors = null
+            },
+            onSaved = { key ->
+                onThemeChange(key)
+            }
+        )
         }
     }
 }

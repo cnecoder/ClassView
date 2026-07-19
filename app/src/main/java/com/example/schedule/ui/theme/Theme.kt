@@ -10,6 +10,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
@@ -18,7 +19,9 @@ fun ScheduleTheme(
     themeKey: String = "morandi",
     content: @Composable () -> Unit
 ) {
-    val preset = getPreset(themeKey)
+    val context = LocalContext.current
+    val preset = (if (themeKey.startsWith("custom_")) ThemeManager.loadCustomTheme(context, themeKey)
+                  else null) ?: getPreset(themeKey)
     val view = LocalView.current
     val isDark = preset.isDark
 
