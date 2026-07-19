@@ -56,7 +56,7 @@ class ScheduleApp : Application() {
 
         val holidayApi = retrofit.create(HolidayApi::class.java)
 
-        courseRepository = CourseRepository(db.courseDao(), db.alarmDao())
+        courseRepository = CourseRepository(db.courseDao(), db.alarmDao(), db.classInstanceDao())
         holidayRepository = HolidayRepository(db.holidayDao(), holidayApi)
 
         applicationScope.launch {

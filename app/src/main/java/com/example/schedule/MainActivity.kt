@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             ScheduleTheme {
                 val courses by viewModel.courses.collectAsState()
+                val instances by viewModel.instances.collectAsState()
                 val holidayMap by viewModel.holidayMap.collectAsState()
                 val editing by viewModel.editingCourse.collectAsState()
 
@@ -50,15 +51,20 @@ class MainActivity : ComponentActivity() {
                     val usedColors = courses
                         .filter { it.id != editing!!.id && it.endDate >= DateUtils.todayStr() }
                         .map { it.color }.toSet()
+                    val editInstances = instances.filter { it.courseId == editing!!.id }
                     CourseEditScreen(
                         course = editing!!,
                         usedColors = usedColors,
-                        onSave = { viewModel.saveCourse(it) },
+                        existingInstances = editInstances,
+                        onSaveWithInstances = { course, insts ->
+                            viewModel.saveCourseWithInstances(course, insts)
+                        },
                         onCancel = { viewModel.cancelEdit() }
                     )
                 } else {
                     HomeScreen(
                         courses = courses,
+                        instances = instances,
                         holidayMap = holidayMap,
                         onAddClick = { viewModel.startNewCourse() },
                         onEditClick = { viewModel.startEditCourse(it) },

@@ -12,23 +12,28 @@ object CourseCalculator {
         val timestamp: Long
     )
 
+    data class DayOverrideData(
+        val exclude: Boolean = false,
+        val startTime: String? = null
+    )
+
     fun calculate(course: Course, holidayMap: Map<String, Boolean>): List<ClassDate> {
+        return calculate(course, holidayMap, emptyMap())
+    }
+
+    fun calculate(
+        course: Course,
+        holidayMap: Map<String, Boolean>,
+        overrides: Map<String, DayOverrideData>
+    ): List<ClassDate> {
         val startDate = DateUtils.parseDate(course.startDate)
         val endDate = DateUtils.parseDate(course.endDate)
-
         val targetDays = DateUtils.parseDaySet(course.daysOfWeek)
-        com.example.schedule.util.DebugLog.w("Calc", "[${course.name}] days=$targetDays rest=${course.restDays} range=${course.startDate}~${course.endDate} holidays=${holidayMap.size}")
-
-        if (targetDays.isEmpty()) {
-            com.example.schedule.util.DebugLog.w("Calc", "[${course.name}] -> EMPTY (no days)")
-            return emptyList()
-        }
+        if (targetDays.isEmpty()) return emptyList()
 
         val allDates = DateUtils.generateDatesByDayOfWeek(startDate, endDate, targetDays)
         val restDays = DateUtils.parseDaySet(course.restDays)
         val targetWeeks = DateUtils.parseWeekRanges(course.repeatWeeks)
-
-        com.example.schedule.util.DebugLog.w("Calc", "[${course.name}] rawDates=${allDates.size} restDays=$restDays targetWeeks=$targetWeeks")
 
         return allDates.mapNotNull { date ->
             val dateStr = DateUtils.formatDate(date)
@@ -46,11 +51,16 @@ object CourseCalculator {
                 return@mapNotNull null
             }
 
+            // 应用逐日覆盖
+            val ov = overrides[dateStr]
+            if (ov?.exclude == true) return@mapNotNull null
+            val effectiveTime = ov?.startTime ?: course.startTime
+
             ClassDate(
                 date = date,
                 dateStr = dateStr,
                 weekNumber = weekNum,
-                timestamp = DateUtils.toTimestamp(date, course.startTime)
+                timestamp = DateUtils.toTimestamp(date, effectiveTime)
             )
         }
     }

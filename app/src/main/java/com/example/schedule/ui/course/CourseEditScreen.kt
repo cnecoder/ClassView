@@ -29,13 +29,15 @@ import com.example.schedule.data.model.Course
 import com.example.schedule.ui.theme.getAvailableColors
 import com.example.schedule.util.DateUtils
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseEditScreen(
     course: Course,
     usedColors: Set<Int>,
-    onSave: (Course) -> Unit,
+    existingInstances: List<com.example.schedule.data.model.ClassInstance>,
+    onSaveWithInstances: (Course, List<com.example.schedule.data.model.ClassInstance>) -> Unit,
     onCancel: () -> Unit
 ) {
     val availColors = remember(usedColors) { getAvailableColors(usedColors) }
@@ -59,7 +61,11 @@ fun CourseEditScreen(
         mutableIntStateOf(if (idx >= 0) idx else 0)
     }
     var note by remember { mutableStateOf(course.note) }
-    val selectedColorVal = availColors.getOrElse(selectedColorIdx) { availColors[0] }.hashCode()
+    val selectedColor = availColors.getOrElse(selectedColorIdx) { availColors[0] }.hashCode()
+    // 日历逐日覆盖数据（从已有实例重建）
+    var dayOverrides by remember {
+        mutableStateOf(reconstructOverrides(course, existingInstances))
+    }
 
     var showStartTimePicker by remember { mutableStateOf(false) }
     var showDurationPicker by remember { mutableStateOf(false) }
@@ -96,17 +102,19 @@ fun CourseEditScreen(
                         val computedEndTime = DateUtils.minutesToTime(
                             DateUtils.timeToMinutes(startTime) + durationMin
                         )
-                        onSave(course.copy(
+                        val saved = course.copy(
                             name = name, daysOfWeek = daysToStr(selectedDays),
                             startTime = startTime, endTime = computedEndTime,
                             startDate = startDate, endDate = endDate,
-                            skipHolidays = skipHolidays,
+                            repeatWeeks = "", skipHolidays = skipHolidays,
                             enableAlarm = enableAlarm,
                             alarmMinutesBefore = alarmMinutesBefore,
                             alarmRepeatInterval = alarmRepeatInterval,
                             alarmRepeatCount = alarmRepeatCount,
-                            color = selectedColorVal, note = note
-                        ))
+                            color = selectedColor, note = note
+                        )
+                        val instances = buildInstances(saved, dayOverrides)
+                        onSaveWithInstances(saved, instances)
                     }) {
                         Text("保存", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                     }
@@ -313,6 +321,22 @@ fun CourseEditScreen(
                 }
             }
 
+            // ===== 课程日历预览 =====
+            CalendarPreviewSection(
+                startDate = startDate, endDate = endDate,
+                daysOfWeek = daysToStr(selectedDays),
+                restDays = "6,7",
+                skipHolidays = skipHolidays,
+                startTime = startTime, durationMin = durationMin,
+                enableAlarm = enableAlarm,
+                alarmMinutesBefore = alarmMinutesBefore,
+                alarmRepeatInterval = alarmRepeatInterval,
+                alarmRepeatCount = alarmRepeatCount,
+                selectedColor = selectedColor,
+                overrides = dayOverrides,
+                onOverridesChange = { dayOverrides = it }
+            )
+
             // ===== 备注 =====
             SectionCard(title = "备注") {
                 OutlinedTextField(
@@ -323,6 +347,248 @@ fun CourseEditScreen(
                 )
             }
             Spacer(modifier = Modifier.height(32.dp))
+        }
+    }
+}
+
+// ===== 课程日历预览 =====
+data class DayOverride(
+    val exclude: Boolean = false,
+    val startTime: String? = null,
+    val durationMin: Int? = null,
+    val enableAlarm: Boolean? = null,
+    val alarmMinutesBefore: Int? = null,
+    val alarmRepeatInterval: Int? = null,
+    val alarmRepeatCount: Int? = null
+)
+
+@Composable
+private fun CalendarPreviewSection(
+    startDate: String, endDate: String,
+    daysOfWeek: String, restDays: String, skipHolidays: Boolean,
+    startTime: String, durationMin: Int,
+    enableAlarm: Boolean, alarmMinutesBefore: Int,
+    alarmRepeatInterval: Int, alarmRepeatCount: Int,
+    selectedColor: Int,
+    overrides: Map<String, DayOverride>,
+    onOverridesChange: (Map<String, DayOverride>) -> Unit
+) {
+    var currentMonth by remember { mutableStateOf(try { DateUtils.parseDate(startDate) } catch (_: Exception) { LocalDate.now() }.withDayOfMonth(1)) }
+    var editTarget by remember { mutableStateOf<String?>(null) }
+    var lastClickTime by remember { mutableStateOf(0L) }
+    val fmt = DateTimeFormatter.ofPattern("yyyy年M月")
+    val df = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    // 计算模板生成的默认活跃日期
+    val defaultDates = remember(startDate, endDate, daysOfWeek, restDays, skipHolidays) {
+        val s = try { DateUtils.parseDate(startDate) } catch (_: Exception) { LocalDate.now() }
+        val e = try { DateUtils.parseDate(endDate) } catch (_: Exception) { LocalDate.now() }
+        val targets = DateUtils.parseDaySet(daysOfWeek)
+        val rests = DateUtils.parseDaySet(restDays)
+        val all = DateUtils.generateDatesByDayOfWeek(s, e, targets)
+        all.filter { DateUtils.getDayOfWeek(it) !in rests }.map { DateUtils.formatDate(it) }.toSet()
+    }
+
+    val today = LocalDate.now()
+    val currentMonthStr = currentMonth.format(df)
+
+    // 弹窗编辑某天
+    if (editTarget != null) {
+        val date = editTarget!!
+        val ov = overrides[date] ?: DayOverride()
+        var editST by remember(date) { mutableStateOf(ov.startTime ?: startTime) }
+        var editDur by remember(date) { mutableIntStateOf(ov.durationMin ?: durationMin) }
+        var editAlarm by remember(date) { mutableStateOf(ov.enableAlarm ?: enableAlarm) }
+        var editBefore by remember(date) { mutableIntStateOf(ov.alarmMinutesBefore ?: alarmMinutesBefore) }
+        var editInterval by remember(date) { mutableIntStateOf(ov.alarmRepeatInterval ?: alarmRepeatInterval) }
+        var editCount by remember(date) { mutableIntStateOf(ov.alarmRepeatCount ?: alarmRepeatCount) }
+        var showEditTimePicker by remember { mutableStateOf(false) }
+        var showEditDurPicker by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { editTarget = null },
+            title = { Text("$date 课程调整", fontWeight = FontWeight.SemiBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PickerTrigger(label = "开始时间", value = editST,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showEditTimePicker = true })
+                    PickerTrigger(label = "时长", value = "${editDur}分钟",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { showEditDurPicker = true })
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("启用闹钟", Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = editAlarm, onCheckedChange = { editAlarm = it })
+                    }
+                    if (editAlarm) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(value = editBefore.toString(),
+                                onValueChange = { editBefore = it.toIntOrNull() ?: 0 },
+                                label = { Text("提前") }, modifier = Modifier.weight(1f),
+                                singleLine = true, shape = RoundedCornerShape(8.dp))
+                            OutlinedTextField(value = editInterval.toString(),
+                                onValueChange = { editInterval = it.toIntOrNull() ?: 0 },
+                                label = { Text("间隔") }, modifier = Modifier.weight(1f),
+                                singleLine = true, shape = RoundedCornerShape(8.dp))
+                            OutlinedTextField(value = editCount.toString(),
+                                onValueChange = { editCount = it.toIntOrNull() ?: 0 },
+                                label = { Text("次数") }, modifier = Modifier.weight(1f),
+                                singleLine = true, shape = RoundedCornerShape(8.dp))
+                        }
+                    }
+                    if (showEditTimePicker) {
+                        val (h, m) = editST.split(":").let {
+                            (it.getOrNull(0)?.toIntOrNull() ?: 8) to (it.getOrNull(1)?.toIntOrNull() ?: 0)
+                        }
+                        ScrollWheelTimeDialog(title = "开始时间", initialHour = h, initialMinute = m,
+                            onDismiss = { showEditTimePicker = false },
+                            onConfirm = { hh, mm -> editST = "%02d:%02d".format(hh, mm); showEditTimePicker = false })
+                    }
+                    if (showEditDurPicker) {
+                        ScrollWheelDurationDialog(title = "时长", initialValue = editDur,
+                            onDismiss = { showEditDurPicker = false },
+                            onConfirm = { editDur = it; showEditDurPicker = false })
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val newMap = overrides.toMutableMap()
+                    newMap[date] = DayOverride(
+                        exclude = false,
+                        startTime = if (editST != startTime) editST else null,
+                        durationMin = if (editDur != durationMin) editDur else null,
+                        enableAlarm = if (editAlarm != enableAlarm) editAlarm else null,
+                        alarmMinutesBefore = if (editBefore != alarmMinutesBefore) editBefore else null,
+                        alarmRepeatInterval = if (editInterval != alarmRepeatInterval) editInterval else null,
+                        alarmRepeatCount = if (editCount != alarmRepeatCount) editCount else null
+                    )
+                    onOverridesChange(newMap)
+                    editTarget = null
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editTarget = null }) { Text("取消") }
+            }
+        )
+    }
+
+    SectionCard(title = "课程日历") {
+        // 当月日历
+        val firstDay = currentMonth.withDayOfMonth(1)
+        val daysInMonth = currentMonth.lengthOfMonth()
+        val startOffset = (firstDay.dayOfWeek.value - 1)
+        val totalCells = startOffset + daysInMonth
+        val rows = (totalCells + 6) / 7
+        val weekHeaders = listOf("一", "二", "三", "四", "五", "六", "日")
+
+        // 月份导航
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { currentMonth = currentMonth.minusMonths(1) }) {
+                Text("◀", color = MaterialTheme.colorScheme.primary)
+            }
+            Text(currentMonth.format(fmt), style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = { currentMonth = currentMonth.plusMonths(1) }) {
+                Text("▶", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        Row(Modifier.fillMaxWidth()) {
+            weekHeaders.forEach { d ->
+                Text(d, Modifier.weight(1f), textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+
+        for (row in 0 until rows) {
+            Row(Modifier.fillMaxWidth().height(44.dp)) {
+                for (col in 0..6) {
+                    val cellIdx = row * 7 + col
+                    val dayNum = cellIdx - startOffset + 1
+                    if (dayNum in 1..daysInMonth) {
+                        val date = currentMonth.withDayOfMonth(dayNum)
+                        val dateStr = DateUtils.formatDate(date)
+                        val isInRange = dateStr >= startDate && dateStr <= endDate
+                        val isDefault = dateStr in defaultDates
+                        val ov = overrides[dateStr]
+                        val isExcluded = ov?.exclude == true
+                        val isOverride = ov != null && !isExcluded
+                        val isActive = (isDefault && !isExcluded) || isOverride
+                        val isToday = date == today
+
+                        Surface(
+                            modifier = Modifier.weight(1f).fillMaxHeight().padding(1.dp)
+                                .clickable {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastClickTime < 400) {
+                                        // 双击编辑
+                                        if (isInRange) editTarget = dateStr
+                                    } else {
+                                        // 单击切换
+                                        if (isInRange) {
+                                            val newMap = overrides.toMutableMap()
+                                            if (isDefault) {
+                                                newMap[dateStr] = DayOverride(exclude = !isExcluded)
+                                            } else if (!isActive) {
+                                                newMap[dateStr] = DayOverride(exclude = false)
+                                            } else {
+                                                newMap[dateStr] = DayOverride(exclude = true)
+                                            }
+                                            onOverridesChange(newMap)
+                                        }
+                                    }
+                                    lastClickTime = now
+                                },
+                            shape = RoundedCornerShape(4.dp),
+                            color = when {
+                                !isInRange -> Color.Transparent
+                                isActive -> Color(selectedColor).copy(alpha = 0.25f)
+                                isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                else -> Color.Transparent
+                            },
+                            border = if (isActive)
+                                androidx.compose.foundation.BorderStroke(1.5.dp, Color(selectedColor))
+                            else null
+                        ) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("$dayNum",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (!isInRange) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                                        else if (isActive) MaterialTheme.colorScheme.onSurface
+                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal)
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.weight(1f).fillMaxHeight())
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(Modifier.size(10.dp), shape = CircleShape,
+                    color = Color(selectedColor).copy(alpha = 0.25f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(selectedColor))) {}
+                Spacer(Modifier.width(4.dp))
+                Text("上课", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("单击切换 双击编辑", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -529,4 +795,85 @@ private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Un
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) { Column(Modifier.padding(16.dp), content = content) }
     }
+}
+
+/** 从已有实例反向重建覆盖映射 */
+private fun reconstructOverrides(
+    course: Course,
+    existing: List<com.example.schedule.data.model.ClassInstance>
+): Map<String, DayOverride> {
+    if (existing.isEmpty()) return emptyMap()
+    val result = mutableMapOf<String, DayOverride>()
+    val instMap = existing.associateBy { it.date }
+
+    // 生成模板日期
+    val s = try { DateUtils.parseDate(course.startDate) } catch (_: Exception) { java.time.LocalDate.now() }
+    val e = try { DateUtils.parseDate(course.endDate) } catch (_: Exception) { java.time.LocalDate.now() }
+    val targets = DateUtils.parseDaySet(course.daysOfWeek)
+    val rests = DateUtils.parseDaySet(course.restDays)
+    val allDates = DateUtils.generateDatesByDayOfWeek(s, e, targets)
+    val defaultDur = DateUtils.timeToMinutes(course.endTime) - DateUtils.timeToMinutes(course.startTime)
+
+    for (d in allDates) {
+        val ds = DateUtils.formatDate(d)
+        if (DateUtils.getDayOfWeek(d) in rests) continue
+        val inst = instMap[ds]
+        if (inst == null) {
+            // 模板有但实例表没有 → 被排除了
+            result[ds] = DayOverride(exclude = true)
+        } else if (inst.manuallyEdited) {
+            // 单独调整过 → 记录差异
+            val instDur = DateUtils.timeToMinutes(inst.endTime) - DateUtils.timeToMinutes(inst.startTime)
+            result[ds] = DayOverride(
+                exclude = false,
+                startTime = if (inst.startTime != course.startTime) inst.startTime else null,
+                durationMin = if (instDur != defaultDur) instDur else null,
+                enableAlarm = if (inst.enableAlarm != course.enableAlarm) inst.enableAlarm else null,
+                alarmMinutesBefore = if (inst.alarmMinutesBefore != course.alarmMinutesBefore) inst.alarmMinutesBefore else null,
+                alarmRepeatInterval = if (inst.alarmRepeatInterval != course.alarmRepeatInterval) inst.alarmRepeatInterval else null,
+                alarmRepeatCount = if (inst.alarmRepeatCount != course.alarmRepeatCount) inst.alarmRepeatCount else null
+            )
+        }
+    }
+    return result
+}
+
+// ===== 从模板 + 覆盖生成 ClassInstance 列表 =====
+private fun buildInstances(
+    course: Course,
+    overrides: Map<String, DayOverride>
+): List<com.example.schedule.data.model.ClassInstance> {
+    val s = try { DateUtils.parseDate(course.startDate) } catch (_: Exception) { java.time.LocalDate.now() }
+    val e = try { DateUtils.parseDate(course.endDate) } catch (_: Exception) { java.time.LocalDate.now() }
+    val targets = DateUtils.parseDaySet(course.daysOfWeek)
+    val rests = DateUtils.parseDaySet(course.restDays)
+    val allDates = DateUtils.generateDatesByDayOfWeek(s, e, targets)
+    val defaultEnd = DateUtils.minutesToTime(DateUtils.timeToMinutes(course.startTime) + 90)
+
+    val result = mutableListOf<com.example.schedule.data.model.ClassInstance>()
+    for (date in allDates) {
+        val ds = DateUtils.formatDate(date)
+        if (DateUtils.getDayOfWeek(date) in rests) continue
+
+        val ov = overrides[ds]
+        if (ov?.exclude == true) continue
+
+        val st = ov?.startTime ?: course.startTime
+        val dm = ov?.durationMin ?: DateUtils.timeToMinutes(course.endTime) - DateUtils.timeToMinutes(course.startTime)
+        val et = DateUtils.minutesToTime(DateUtils.timeToMinutes(st) + dm.coerceIn(15, 180))
+
+        val hasOverride = ov != null
+        result.add(com.example.schedule.data.model.ClassInstance(
+            courseId = course.id,
+            date = ds,
+            startTime = st,
+            endTime = et,
+            enableAlarm = ov?.enableAlarm ?: course.enableAlarm,
+            alarmMinutesBefore = ov?.alarmMinutesBefore ?: course.alarmMinutesBefore,
+            alarmRepeatInterval = ov?.alarmRepeatInterval ?: course.alarmRepeatInterval,
+            alarmRepeatCount = ov?.alarmRepeatCount ?: course.alarmRepeatCount,
+            manuallyEdited = hasOverride
+        ))
+    }
+    return result
 }

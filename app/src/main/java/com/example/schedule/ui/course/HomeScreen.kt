@@ -41,13 +41,14 @@ private fun courseDateLabel(course: Course): String {
 @Composable
 fun HomeScreen(
     courses: List<Course>,
+    instances: List<com.example.schedule.data.model.ClassInstance>,
     holidayMap: Map<String, Boolean>,
     onAddClick: () -> Unit,
     onEditClick: (Course) -> Unit,
     onDeleteClick: (Course) -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("本周课程", "日历视图")
+    val tabs = listOf("本周课程", "日历视图", "课程列表")
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -82,8 +83,9 @@ fun HomeScreen(
         }
     ) { padding ->
         when (selectedTab) {
-            0 -> WeekView(courses, holidayMap, padding, onEditClick, onDeleteClick)
-            1 -> CalendarView(courses, holidayMap, padding, onEditClick)
+            0 -> WeekView(courses, instances, holidayMap, padding, onEditClick, onDeleteClick)
+            1 -> CalendarView(courses, instances, holidayMap, padding, onEditClick)
+            2 -> CourseListView(courses, instances, padding, onEditClick)
         }
     }
 }
@@ -92,6 +94,7 @@ fun HomeScreen(
 @Composable
 private fun WeekView(
     courses: List<Course>,
+    instances: List<com.example.schedule.data.model.ClassInstance>,
     holidayMap: Map<String, Boolean>,
     padding: PaddingValues,
     onEditClick: (Course) -> Unit,
@@ -105,24 +108,16 @@ private fun WeekView(
     val weekStartStr = DateUtils.formatDate(weekStart)
     val weekEndStr = DateUtils.formatDate(weekEnd)
 
-    // 筛选本周有课的课程
-    val weekCourses = remember(courses.hashCode(), holidayMap.hashCode()) {
-        val filtered = courses.filter { course ->
-            val classDates = com.example.schedule.util.CourseCalculator.calculate(course, holidayMap)
-            val inWeek = classDates.any { cd ->
-                val d = DateUtils.formatDate(cd.date)
-                d >= weekStartStr && d <= weekEndStr
-            }
-            if (!inWeek) {
-                com.example.schedule.util.DebugLog.w("Week", "[${course.name}] NO week=$weekStartStr~$weekEndStr days=${course.daysOfWeek} dates=${classDates.size}")
-            }
-            inWeek
-        }
-        com.example.schedule.util.DebugLog.w("Week", "total=${courses.size} filtered=${filtered.size} week=$weekStartStr~$weekEndStr holidayKeys=${holidayMap.size}")
-        filtered
+    // 筛选本周有课的实例
+    val weekInstances = remember(instances) {
+        instances.filter { it.date >= weekStartStr && it.date <= weekEndStr }
     }
 
-    if (weekCourses.isEmpty()) {
+    // 本周有实例的课程 ID 集合
+    val weekCourseIds = remember(weekInstances) { weekInstances.map { it.courseId }.toSet() }
+    val courseMap = remember(courses) { courses.associateBy { it.id } }
+
+    if (weekInstances.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("📅", style = MaterialTheme.typography.displayMedium)
@@ -135,12 +130,10 @@ private fun WeekView(
             }
         }
     } else {
-        val expanded = mutableListOf<Pair<Int, Course>>()
-        for (c in weekCourses) {
-            val days = DateUtils.parseDaySet(c.daysOfWeek)
-            for (d in days) { expanded.add(d to c) }
+        // 按日期分组
+        val groupedByDate = remember(weekInstances) {
+            weekInstances.groupBy { it.date }
         }
-        val grouped = expanded.groupBy({ it.first }, { it.second })
         val weekLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
         val weekIcons = listOf("一", "二", "三", "四", "五", "六", "日")
         val fmt = DateTimeFormatter.ofPattern("MM/dd")
@@ -152,9 +145,10 @@ private fun WeekView(
         ) {
             for (i in 0..6) {
                 val date = weekStart.plusDays(i.toLong())
-                val dow = date.dayOfWeek.value // 1=Mon..7=Sun
-                val dayCourses = grouped[dow] ?: emptyList()
-                if (dayCourses.isNotEmpty()) {
+                val dateStr = DateUtils.formatDate(date)
+                val dayInstances = groupedByDate[dateStr] ?: emptyList()
+                if (dayInstances.isNotEmpty()) {
+                    val dow = date.dayOfWeek.value
                     item {
                         Row(
                             Modifier.padding(top = 16.dp, bottom = 8.dp),
@@ -182,9 +176,12 @@ private fun WeekView(
                             }
                         }
                     }
-                    items(count = dayCourses.size) { idx ->
-                        CourseCard(dayCourses[idx], onEditClick,
-                            onDelete = { deleteConfirmCourse = dayCourses[idx] })
+                    items(dayInstances, key = { "inst-${it.id}" }) { inst ->
+                        val c = courseMap[inst.courseId]
+                        if (c != null) {
+                            CourseCard(c, inst, onEditClick,
+                                onDelete = { deleteConfirmCourse = c })
+                        }
                     }
                 }
             }
@@ -211,37 +208,180 @@ private fun WeekView(
     }
 }
 
+// ===== 课程列表视图 =====
+@Composable
+private fun CourseListView(
+    courses: List<Course>,
+    instances: List<com.example.schedule.data.model.ClassInstance>,
+    padding: PaddingValues,
+    onEditClick: (Course) -> Unit
+) {
+    var selectedCourse by remember { mutableStateOf<Course?>(null) }
+
+    if (selectedCourse != null) {
+        // 展开某课程的日历详情
+        val c = selectedCourse!!
+        val courseInsts = remember(instances, c.id) {
+            instances.filter { it.courseId == c.id }.sortedBy { it.date }
+        }
+        val fmt = DateTimeFormatter.ofPattern("yyyy年M月")
+        val currentMonth = try { DateUtils.parseDate(c.startDate) } catch (_: Exception) { LocalDate.now() }
+
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+            // 标题行
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { selectedCourse = null }) {
+                    Text("◀ 返回", color = MaterialTheme.colorScheme.primary)
+                }
+                Spacer(Modifier.weight(1f))
+                Text(c.name, style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { onEditClick(c) }) {
+                    Text("编辑", color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            // 课程模板信息
+            Card(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Column {
+                        Text("时间", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${c.startTime} - ${c.endTime}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Column {
+                        Text("日期", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${c.startDate} ~ ${c.endDate}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text("${courseInsts.size} 节课", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary)
+
+            // 实例列表
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(courseInsts, key = { "cl-${it.id}" }) { inst ->
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (inst.manuallyEdited)
+                                Color(c.color).copy(alpha = 0.12f)
+                            else MaterialTheme.colorScheme.surface
+                        )
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(inst.date, style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.width(90.dp))
+                            Text("${inst.startTime} - ${inst.endTime}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            if (inst.manuallyEdited) {
+                                Spacer(Modifier.weight(1f))
+                                Text("已调整", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(80.dp)) }
+            }
+        }
+    } else {
+        // 课程列表
+        val fmt = DateTimeFormatter.ofPattern("MM/dd")
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (courses.isEmpty()) {
+                item {
+                    Box(Modifier.fillParentMaxSize().height(200.dp),
+                        contentAlignment = Alignment.Center) {
+                        Text("暂无课程", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            items(courses, key = { "list-${it.id}" }) { course ->
+                Card(
+                    Modifier.fillMaxWidth().clickable { selectedCourse = course },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(course.color).copy(alpha = 0.15f))
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(course.name, style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Column {
+                                Text("开始时间", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(course.startTime, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            val dur = DateUtils.timeToMinutes(course.endTime) - DateUtils.timeToMinutes(course.startTime)
+                            Column {
+                                Text("时长", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${dur}分钟", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Column {
+                                Text("日期", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(course.startDate, style = MaterialTheme.typography.bodyMedium)
+                                Text(course.endDate, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(80.dp)) }
+        }
+    }
+}
+
 // ===== 日历视图 =====
 @Composable
 private fun CalendarView(
     courses: List<Course>,
+    instances: List<com.example.schedule.data.model.ClassInstance>,
     holidayMap: Map<String, Boolean>,
     padding: PaddingValues,
     onEditClick: (Course) -> Unit
 ) {
     var currentMonth by remember { mutableStateOf(LocalDate.now().withDayOfMonth(1)) }
     var selectedDate by remember { mutableStateOf<LocalDate?>(null) }
+    val courseMap = remember(courses) { courses.associateBy { it.id } }
     val fmt = DateTimeFormatter.ofPattern("yyyy年M月")
 
-    // 按月计算课程
-    val monthData = remember(courses.hashCode(), holidayMap.hashCode(), currentMonth) {
+    // 按月计算实例
+    val monthData = remember(instances, currentMonth) {
         val start = currentMonth
         val end = currentMonth.plusMonths(1).minusDays(1)
-        val result = mutableMapOf<String, List<Course>>()
-        for (c in courses) {
-            val dates = com.example.schedule.util.CourseCalculator.calculate(c, holidayMap)
-            for (cd in dates) {
-                val ds = DateUtils.formatDate(cd.date)
-                if (ds >= DateUtils.formatDate(start) && ds <= DateUtils.formatDate(end)) {
-                    result[ds] = (result[ds] ?: emptyList()) + c
-                }
-            }
-        }
-        result
+        instances.filter {
+            it.date >= DateUtils.formatDate(start) && it.date <= DateUtils.formatDate(end)
+        }.groupBy { it.date }
     }
 
-    // 选中日课程
-    val selectedCourses = remember(selectedDate, monthData) {
+    // 选中日课程实例
+    val selectedInsts = remember(selectedDate, monthData) {
         if (selectedDate == null) emptyList()
         else monthData[DateUtils.formatDate(selectedDate!!)] ?: emptyList()
     }
@@ -294,7 +434,7 @@ private fun CalendarView(
                         if (dayNum in 1..daysInMonth) {
                             val date = currentMonth.withDayOfMonth(dayNum)
                             val dateStr = DateUtils.formatDate(date)
-                            val dayCourses = monthData[dateStr] ?: emptyList()
+                            val dayInsts = monthData[dateStr] ?: emptyList()
                             val isHoliday = holidayMap[dateStr] == true
                             val isToday = date == LocalDate.now()
                             val isSelected = date == selectedDate
@@ -325,16 +465,16 @@ private fun CalendarView(
                                             else MaterialTheme.colorScheme.onSurface,
                                         fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
                                     Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
-                                        dayCourses.take(3).forEach { c ->
+                                        dayInsts.mapNotNull { courseMap[it.courseId] }.distinct().take(3).forEach { c ->
                                             Surface(Modifier.size(6.dp), shape = CircleShape,
                                                 color = Color(c.color)) {}
                                         }
-                                        if (dayCourses.size > 3) {
+                                        if (dayInsts.isNotEmpty() && dayInsts.map { it.courseId }.distinct().size > 3) {
                                             Text("…", style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
-                                    if (isHoliday && dayCourses.isEmpty()) {
+                                    if (isHoliday && dayInsts.isEmpty()) {
                                         Text("休", style = MaterialTheme.typography.labelSmall,
                                             color = Color(0xFFFF9800))
                                     }
@@ -361,7 +501,7 @@ private fun CalendarView(
         }
 
         // 选中日课程详情
-        if (selectedCourses.isNotEmpty()) {
+        if (selectedInsts.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text(
                 text = "  ${selectedDate?.format(DateTimeFormatter.ofPattern("MM月dd日"))} 课程:",
@@ -375,8 +515,11 @@ private fun CalendarView(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(horizontal = 16.dp)
             ) {
-                items(selectedCourses, key = { "cal-${it.id}" }) { course ->
-                    CourseCard(course, onEditClick, onDelete = {})
+                items(selectedInsts, key = { "cal-${it.id}" }) { inst ->
+                    val c = courseMap[inst.courseId]
+                    if (c != null) {
+                        CourseCard(c, inst, onEditClick, onDelete = {})
+                    }
                 }
                 item { Spacer(Modifier.height(80.dp)) }
             }
@@ -389,10 +532,14 @@ private fun CalendarView(
 @Composable
 fun CourseCard(
     course: Course,
+    instance: com.example.schedule.data.model.ClassInstance? = null,
     onClick: (Course) -> Unit,
     onDelete: () -> Unit
 ) {
     val courseColor = Color(course.color)
+    val displayTime = if (instance != null) "${instance.startTime} - ${instance.endTime}" else "${course.startTime} - ${course.endTime}"
+    val hasAlarm = instance?.enableAlarm ?: course.enableAlarm
+
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick(course) },
         shape = RoundedCornerShape(16.dp),
@@ -409,15 +556,19 @@ fun CourseCard(
                 Text(course.name, style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(2.dp))
-                Text("${course.startTime} - ${course.endTime}",
-                    style = MaterialTheme.typography.bodyMedium)
-                Text(courseDateLabel(course), style = MaterialTheme.typography.bodySmall)
+                Text(displayTime, style = MaterialTheme.typography.bodyMedium)
+                if (instance?.manuallyEdited == true) {
+                    Text("已单独调整", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                } else {
+                    Text(courseDateLabel(course), style = MaterialTheme.typography.bodySmall)
+                }
             }
             Icon(
-                imageVector = if (course.enableAlarm) Icons.Default.Notifications
+                imageVector = if (hasAlarm) Icons.Default.Notifications
                     else Icons.Default.NotificationsOff,
                 contentDescription = null, modifier = Modifier.size(18.dp),
-                tint = if (course.enableAlarm) MaterialTheme.colorScheme.primary
+                tint = if (hasAlarm) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
             )
             Spacer(Modifier.width(8.dp))

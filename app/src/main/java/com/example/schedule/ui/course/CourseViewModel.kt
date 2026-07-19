@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.schedule.ScheduleApp
+import com.example.schedule.data.model.ClassInstance
 import com.example.schedule.data.model.Course
 import com.example.schedule.data.repository.CourseRepository
 import com.example.schedule.data.repository.HolidayRepository
 import com.example.schedule.alarm.AlarmScheduler
+import com.example.schedule.util.CourseCalculator
 import com.example.schedule.util.DateUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -19,6 +21,9 @@ class CourseViewModel(
 ) : ViewModel() {
 
     val courses: StateFlow<List<Course>> = courseRepo.getAllCourses()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val instances: StateFlow<List<ClassInstance>> = courseRepo.getAllInstances()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _holidayMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
@@ -34,35 +39,19 @@ class CourseViewModel(
             val start = "${yr}-01-01"
             val end = "${yr + 1}-12-31"
             _holidayMap.value = holidayRepo.getHolidayMap(start, end)
-            com.example.schedule.util.DebugLog.w("VM", "VM: holidayMap loaded, size=${_holidayMap.value.size}")
-        }
-        viewModelScope.launch {
-            courses.collect { list ->
-                list.forEach { c ->
-                    com.example.schedule.util.DebugLog.w("VM", "VM: course [${c.name}] id=${c.id} days=${c.daysOfWeek} range=${c.startDate}~${c.endDate} alarm=${c.enableAlarm} rest=${c.restDays}")
-                }
-            }
         }
     }
 
     fun startNewCourse() {
         val today = DateUtils.todayStr()
         _editingCourse.value = Course(
-            name = "",
-            daysOfWeek = "1",
-            startTime = "08:00",
-            endTime = "09:30",
-            startDate = today,
-            endDate = today,
-            repeatWeeks = "",
-            skipHolidays = true,
-            restDays = "6,7",
+            name = "", daysOfWeek = "1",
+            startTime = "08:00", endTime = "09:30",
+            startDate = today, endDate = today,
+            repeatWeeks = "", skipHolidays = true, restDays = "6,7",
             enableAlarm = false,
-            alarmMinutesBefore = 15,
-            alarmRepeatInterval = 5,
-            alarmRepeatCount = 3,
-            color = 0xFFB5C7D3.toInt(),
-            note = ""
+            alarmMinutesBefore = 15, alarmRepeatInterval = 5, alarmRepeatCount = 3,
+            color = 0xFFB5C7D3.toInt(), note = ""
         )
     }
 
@@ -74,21 +63,21 @@ class CourseViewModel(
         _editingCourse.value = null
     }
 
-    fun saveCourse(course: Course) {
+    fun saveCourseWithInstances(course: Course, instances: List<ClassInstance>) {
         viewModelScope.launch {
             try {
                 if (course.id == 0L) {
-                    com.example.schedule.util.DebugLog.w("VM", "insert course: ${course.daysOfWeek}")
                     val id = courseRepo.insert(course)
                     val saved = course.copy(id = id)
-                    com.example.schedule.util.DebugLog.w("VM", "inserted id=$id, scheduling alarm")
+                    val withCourse = instances.map { it.copy(courseId = id) }
+                    courseRepo.saveInstances(id, withCourse)
                     scheduleAlarm(saved)
                 } else {
                     courseRepo.update(course)
+                    courseRepo.saveInstances(course.id, instances)
                     scheduleAlarm(course)
                 }
                 _editingCourse.value = null
-                com.example.schedule.util.DebugLog.w("VM", "save done")
             } catch (e: Exception) {
                 com.example.schedule.util.DebugLog.e("VM", "save failed", e)
                 _editingCourse.value = null
@@ -108,7 +97,6 @@ class CourseViewModel(
         val scheduler = AlarmScheduler(app, courseRepo)
         scheduler.scheduleForCourse(course, holidayRepo)
 
-        // 将下一个闹钟添加到系统时钟 App
         val firstTime = scheduler.getFirstAlarmTime(course, holidayRepo)
         if (firstTime != null) {
             scheduler.addToSystemClock(course, firstTime)
