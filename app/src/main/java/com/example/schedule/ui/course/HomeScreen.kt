@@ -27,16 +27,6 @@ import com.example.schedule.util.DateUtils
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
-private fun courseDateLabel(course: Course): String {
-    return try {
-        val inFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-        val outFmt = DateTimeFormatter.ofPattern("MM/dd")
-        val s = LocalDate.parse(course.startDate, inFmt).format(outFmt)
-        val e = LocalDate.parse(course.endDate, inFmt).format(outFmt)
-        "$s - $e"
-    } catch (_: Exception) { "" }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -560,8 +550,6 @@ fun CourseCard(
                 if (instance?.manuallyEdited == true) {
                     Text("已单独调整", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary)
-                } else {
-                    Text(courseDateLabel(course), style = MaterialTheme.typography.bodySmall)
                 }
             }
             Icon(
