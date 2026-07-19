@@ -57,9 +57,6 @@
 违反此规则可能导致误解或技术沟通问题。请严格遵守。
 
 ## 规则——Git Commit 规范
-提交信息遵循 `.gitcommit-template` 模板格式：
-- **type**: feat(新功能) / fix(修bug) / refactor(重构) / chore(杂项) / docs(文档)
-- **标题**: type + 简短中文摘要, ≤50 字
-- **正文**: 按分类标题组织（数据层/业务逻辑/UI/修复），每条用 `-` 列举
+- 提交信息遵循 `.gitcommit-template` 模板格式
 - 提交前确认所有修改文件已 `git add`
 - 使用 `git commit -m "$(cat <<'EOF' ... EOF)"` 格式提交多行消息

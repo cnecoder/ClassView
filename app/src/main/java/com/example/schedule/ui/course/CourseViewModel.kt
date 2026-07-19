@@ -48,7 +48,7 @@ class CourseViewModel(
             name = "", daysOfWeek = "1",
             startTime = "08:00", endTime = "09:30",
             startDate = today, endDate = today,
-            repeatWeeks = "", skipHolidays = true, restDays = "6,7",
+            repeatWeeks = "", skipHolidays = true,
             enableAlarm = false,
             alarmMinutesBefore = 15, alarmRepeatInterval = 5, alarmRepeatCount = 3,
             color = 0xFFB5C7D3.toInt(), note = ""

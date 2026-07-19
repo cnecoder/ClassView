@@ -32,15 +32,11 @@ object CourseCalculator {
         if (targetDays.isEmpty()) return emptyList()
 
         val allDates = DateUtils.generateDatesByDayOfWeek(startDate, endDate, targetDays)
-        val restDays = DateUtils.parseDaySet(course.restDays)
         val targetWeeks = DateUtils.parseWeekRanges(course.repeatWeeks)
 
         return allDates.mapNotNull { date ->
             val dateStr = DateUtils.formatDate(date)
-            val dayOfWeek = DateUtils.getDayOfWeek(date)
             val weekNum = DateUtils.getSemesterWeek(date, startDate)
-
-            if (dayOfWeek in restDays) return@mapNotNull null
 
             if (course.skipHolidays) {
                 val isHoliday = holidayMap[dateStr]

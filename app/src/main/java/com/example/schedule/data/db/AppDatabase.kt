@@ -11,7 +11,7 @@ import com.example.schedule.data.model.Holiday
 
 @Database(
     entities = [Course::class, Holiday::class, Alarm::class, ClassInstance::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

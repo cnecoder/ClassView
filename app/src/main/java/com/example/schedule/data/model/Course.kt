@@ -14,7 +14,6 @@ data class Course(
     val endDate: String,                // "yyyy-MM-dd"
     val repeatWeeks: String,            // "1,2,3,5-18"
     val skipHolidays: Boolean = true,
-    val restDays: String = "6,7",       // 默认周六日休息
     val enableAlarm: Boolean = false,
     val alarmMinutesBefore: Int = 15,
     val alarmRepeatInterval: Int = 5,

@@ -325,7 +325,6 @@ fun CourseEditScreen(
             CalendarPreviewSection(
                 startDate = startDate, endDate = endDate,
                 daysOfWeek = daysToStr(selectedDays),
-                restDays = "6,7",
                 skipHolidays = skipHolidays,
                 startTime = startTime, durationMin = durationMin,
                 enableAlarm = enableAlarm,
@@ -365,7 +364,7 @@ data class DayOverride(
 @Composable
 private fun CalendarPreviewSection(
     startDate: String, endDate: String,
-    daysOfWeek: String, restDays: String, skipHolidays: Boolean,
+    daysOfWeek: String, skipHolidays: Boolean,
     startTime: String, durationMin: Int,
     enableAlarm: Boolean, alarmMinutesBefore: Int,
     alarmRepeatInterval: Int, alarmRepeatCount: Int,
@@ -380,13 +379,11 @@ private fun CalendarPreviewSection(
     val df = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     // 计算模板生成的默认活跃日期
-    val defaultDates = remember(startDate, endDate, daysOfWeek, restDays, skipHolidays) {
+    val defaultDates = remember(startDate, endDate, daysOfWeek) {
         val s = try { DateUtils.parseDate(startDate) } catch (_: Exception) { LocalDate.now() }
         val e = try { DateUtils.parseDate(endDate) } catch (_: Exception) { LocalDate.now() }
         val targets = DateUtils.parseDaySet(daysOfWeek)
-        val rests = DateUtils.parseDaySet(restDays)
-        val all = DateUtils.generateDatesByDayOfWeek(s, e, targets)
-        all.filter { DateUtils.getDayOfWeek(it) !in rests }.map { DateUtils.formatDate(it) }.toSet()
+        DateUtils.generateDatesByDayOfWeek(s, e, targets).map { DateUtils.formatDate(it) }.toSet()
     }
 
     val today = LocalDate.now()
@@ -810,13 +807,11 @@ private fun reconstructOverrides(
     val s = try { DateUtils.parseDate(course.startDate) } catch (_: Exception) { java.time.LocalDate.now() }
     val e = try { DateUtils.parseDate(course.endDate) } catch (_: Exception) { java.time.LocalDate.now() }
     val targets = DateUtils.parseDaySet(course.daysOfWeek)
-    val rests = DateUtils.parseDaySet(course.restDays)
     val allDates = DateUtils.generateDatesByDayOfWeek(s, e, targets)
     val defaultDur = DateUtils.timeToMinutes(course.endTime) - DateUtils.timeToMinutes(course.startTime)
 
     for (d in allDates) {
         val ds = DateUtils.formatDate(d)
-        if (DateUtils.getDayOfWeek(d) in rests) continue
         val inst = instMap[ds]
         if (inst == null) {
             // 模板有但实例表没有 → 被排除了
@@ -846,14 +841,12 @@ private fun buildInstances(
     val s = try { DateUtils.parseDate(course.startDate) } catch (_: Exception) { java.time.LocalDate.now() }
     val e = try { DateUtils.parseDate(course.endDate) } catch (_: Exception) { java.time.LocalDate.now() }
     val targets = DateUtils.parseDaySet(course.daysOfWeek)
-    val rests = DateUtils.parseDaySet(course.restDays)
     val allDates = DateUtils.generateDatesByDayOfWeek(s, e, targets)
     val defaultEnd = DateUtils.minutesToTime(DateUtils.timeToMinutes(course.startTime) + 90)
 
     val result = mutableListOf<com.example.schedule.data.model.ClassInstance>()
     for (date in allDates) {
         val ds = DateUtils.formatDate(date)
-        if (DateUtils.getDayOfWeek(date) in rests) continue
 
         val ov = overrides[ds]
         if (ov?.exclude == true) continue
